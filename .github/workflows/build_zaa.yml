@@ -203,15 +203,17 @@ jobs:
         with:
           cmakeVersion: 3.31.6
 
-      - name: Install Strawberry Perl
-        run: choco install strawberryperl -y
+      - name: Install Strawberry Perl and pkg-config
+        run: |
+          choco install strawberryperl -y
+          choco install pkgconfiglite -y
 
       - name: Cache deps
         id: cache_deps
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/deps/build/BambuStudio_dep
-          key: win-deps-${{ hashFiles('deps/CMakeLists.txt') }}
+          key: win-deps-v252-${{ hashFiles('deps/CMakeLists.txt') }}
 
       - name: Build deps
         if: steps.cache_deps.outputs.cache-hit != 'true'
