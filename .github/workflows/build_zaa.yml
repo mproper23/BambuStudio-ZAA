@@ -21,7 +21,7 @@ on:
       release_tag:
         description: 'Upload to this release tag (leer = kein Upload)'
         required: false
-        default: 'zaa-v2.5.0'
+        default: 'zaa-v2.5.2'
         type: string
 
 jobs:
