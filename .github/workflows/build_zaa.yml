@@ -206,7 +206,7 @@ jobs:
       - name: Install Strawberry Perl and pkg-config
         run: |
           choco install strawberryperl -y
-          choco install pkgconfiglite -y
+          choco install pkgconfiglite -y --allow-empty-checksums
 
       - name: Cache deps
         id: cache_deps
