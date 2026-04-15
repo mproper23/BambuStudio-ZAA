@@ -17,9 +17,12 @@
 #include "MultiNozzleUtils.hpp"
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdlib>
 #include <chrono>
+#include <iterator>
 #include <math.h>
+#include <string>
 #include <utility>
 #include <string_view>
 
@@ -1843,9 +1846,11 @@ namespace DoExport {
 	    // Calculate wiping points if needed
 	    if (print.config().ooze_prevention.value && ! print.config().single_extruder_multi_material) {
 	        Points skirt_points;
-	        for (const ExtrusionEntity *ee : print.skirt().entities)
-	            for (const ExtrusionPath &path : dynamic_cast<const ExtrusionLoop*>(ee)->paths)
-	                append(skirt_points, path.polyline.points);
+	        for (const ExtrusionEntity *ee : print.skirt().entities) {
+	            for (const ExtrusionPath &path : dynamic_cast<const ExtrusionLoop*>(ee)->paths) {
+	                append_points(skirt_points, path.polyline.points);
+                }
+	        }
 	        if (! skirt_points.empty()) {
 	            Polygon outer_skirt = Slic3r::Geometry::convex_hull(skirt_points);
 	            Polygons skirts;
@@ -4852,10 +4857,10 @@ GCode::LayerResult GCode::process_layer(
                     bool is_overridden = support_extrusion_role == erSupportMaterialInterface ? support_intf_overridden : support_overridden;
                     if (is_overridden == (print_wipe_extrusions != 0)) {
                         // support_extrusion_role is erSupportMaterial, erSupportTransition, erSupportMaterialInterface or erMixed for all extrusion paths.
-                        gcode += this->extrude_support(instance_to_print.object_by_extruder.support->chained_path_from(m_last_pos, support_extrusion_role));
+                        gcode += this->extrude_support(instance_to_print.object_by_extruder.support->chained_path_from(m_last_pos.to_point(), support_extrusion_role));
                         if (support_extrusion_role == erSupportMaterialInterface) {
                             // erSupportMaterialInterface may be mixed with erSupportIroning, thus, should also make ironing here
-                            gcode += this->extrude_support(instance_to_print.object_by_extruder.support->chained_path_from(m_last_pos, erSupportIroning));
+                            gcode += this->extrude_support(instance_to_print.object_by_extruder.support->chained_path_from(m_last_pos.to_point(), erSupportIroning));
                         }
                         if (!filament_info.use_for_support)
                             filament_info.use_for_support = true;
@@ -5244,12 +5249,13 @@ void GCode::set_extruders(const std::vector<unsigned int> &extruder_ids)
 void GCode::set_origin(const Vec2d &pointf)
 {
     // if origin increases (goes towards right), last_pos decreases because it goes towards left
-    const Point translate(
-        scale_(m_origin(0) - pointf(0)),
-        scale_(m_origin(1) - pointf(1))
+    const Point3 translate(
+        coord_t(scale_(m_origin(0) - pointf(0))),
+        coord_t(scale_(m_origin(1) - pointf(1))),
+        coord_t(0)
     );
     m_last_pos += translate;
-    m_wipe.path.translate(translate);
+    m_wipe.path.translate(translate.to_point());
     m_origin = pointf;
 }
 
@@ -5332,7 +5338,7 @@ static std::unique_ptr<EdgeGrid::Grid> calculate_layer_edge_grid(const Layer& la
 static bool has_overhang_path_on_slope(const ExtrusionLoop &loop, double slope_length)
 {
     double count_length = 0.0;
-    for (ExtrusionPath path : loop.paths) {
+    for (const ExtrusionPath &path : loop.paths) {
         if (count_length > slope_length)
             return false;
 
@@ -5433,10 +5439,11 @@ double GCode::get_path_speed(const ExtrusionPath &path)
     return speed;
 }
 
-std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, double speed)
+std::string GCode::extrude_loop(const ExtrusionLoop &loop_ref, std::string description, double speed)
 {
     // get a copy; don't modify the orientation of the original loop object otherwise
     // next copies (if any) would not detect the correct orientation
+    ExtrusionLoop loop = loop_ref;
 
     // extrude all loops ccw or cw according to config
     if (m_config.print_in_clockwise)
@@ -5652,23 +5659,24 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     return gcode;
 }
 
-std::string GCode::extrude_multi_path(ExtrusionMultiPath multipath, std::string description, double speed)
+std::string GCode::extrude_multi_path(const ExtrusionMultiPath &multipath, std::string description, double speed)
 {
     // extrude along the path
     std::string gcode;
-    for (ExtrusionPath path : multipath.paths)
+    for (const ExtrusionPath &path : multipath.paths)
         gcode += this->_extrude(path, description, speed);
 
     // BBS
     if (m_wipe.enable && FILAMENT_CONFIG(wipe)) {
         m_wipe.path = Polyline();
-        for (ExtrusionPath &path : multipath.paths) {
+        for (const ExtrusionPath &path : multipath.paths) {
             //BBS: Don't need to save duplicated point into wipe path
             if (!m_wipe.path.empty() && !path.empty() &&
-                m_wipe.path.last_point() == path.first_point())
-                m_wipe.path.append(path.polyline.points.begin() + 1, path.polyline.points.end());
-            else
-                m_wipe.path.append(path.polyline); // TODO: don't limit wipe to last path
+                m_wipe.path.last_point() == path.first_point()) {
+                Polyline p2d = path.polyline.to_polyline();
+                m_wipe.path.append(p2d.points.begin() + 1, p2d.points.end());
+            } else
+                m_wipe.path.append(path.polyline.to_polyline()); // TODO: don't limit wipe to last path
         }
         m_wipe.path.reverse();
     }
@@ -5695,23 +5703,23 @@ std::string GCode::extrude_entity(const ExtrusionEntity &entity, std::string des
     return "";
 }
 
-std::string GCode::extrude_path(ExtrusionPath path, std::string description, double speed)
+std::string GCode::extrude_path(const ExtrusionPath &path, std::string description, double speed)
 {
 //    description += ExtrusionEntity::role_to_string(path.role());
     bool flag = path.get_customize_flag() == CustomizeFlag::cfFloatingVerticalShell;
     std::string gcode = this->_extrude(path, description, speed,flag);
     if (m_wipe.enable && FILAMENT_CONFIG(wipe)) {
-        m_wipe.path = path.polyline;
+        m_wipe.path = path.polyline.to_polyline();
         if (is_tree(this->config().support_type) && (path.role() == erSupportMaterial || path.role() == erSupportMaterialInterface || path.role() == erSupportTransition)) {
             if ((m_wipe.path.first_point() - m_wipe.path.last_point()).cast<double>().norm() > scale_(0.2)) {
                 double min_dist = scale_(0.2);
                 int    i        = 0;
                 for (; i < path.polyline.points.size(); i++) {
-                    double dist = (path.polyline.points[i] - path.last_point()).cast<double>().norm();
+                    double dist = (path.polyline.points[i] - path.last_point3()).cast<double>().norm();
                     if (dist < min_dist) min_dist = dist;
                     if (min_dist < scale_(0.2) && dist > min_dist) break;
                 }
-                m_wipe.path = Polyline(Points(path.polyline.points.begin() + i - 1, path.polyline.points.end()));
+                m_wipe.path = Polyline3(Points3(path.polyline.points.begin() + i - 1, path.polyline.points.end())).to_polyline();
             }
         } else
             m_wipe.path.reverse();
@@ -5765,11 +5773,11 @@ std::string GCode::extrude_infill(const Print &print, const std::vector<ObjectBy
                     extrusions.emplace_back(ee);
             if (! extrusions.empty()) {
                 m_config.apply(print.get_print_region(&region - &by_region.front()).config());
-                chain_and_reorder_extrusion_entities(extrusions, &m_last_pos);
+                { Point lp = m_last_pos.to_point(); chain_and_reorder_extrusion_entities(extrusions, &lp); }
                 for (const ExtrusionEntity *fill : extrusions) {
                     auto *eec = dynamic_cast<const ExtrusionEntityCollection*>(fill);
                     if (eec) {
-                        for (ExtrusionEntity *ee : eec->chained_path_from(m_last_pos).entities)
+                        for (ExtrusionEntity *ee : eec->chained_path_from(m_last_pos.to_point()).entities)
                             gcode += this->extrude_entity(*ee, extrusion_name);
                     } else
                         gcode += this->extrude_entity(*fill, extrusion_name);
@@ -5803,11 +5811,11 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection &support_fill
         if (extrusions.empty() && ironing_extrusions.empty()) return gcode;
         has_support_ironing = has_support_ironing && m_config.enable_support_ironing.value;
         if (has_support_ironing) {
-            chain_and_reorder_extrusion_entities(ironing_extrusions, &m_last_pos);
+            { Point lp = m_last_pos.to_point(); chain_and_reorder_extrusion_entities(ironing_extrusions, &lp); }
         } else{
             ironing_extrusions.clear();
         }
-        chain_and_reorder_extrusion_entities(extrusions, &m_last_pos);
+        { Point lp = m_last_pos.to_point(); chain_and_reorder_extrusion_entities(extrusions, &lp); }
 
         const double support_speed  = NOZZLE_CONFIG(support_speed);
         const double support_interface_speed = NOZZLE_CONFIG(support_interface_speed);
@@ -6036,26 +6044,26 @@ void GCode::split_and_mapping_speed(double other_path_v, double final_v, Extrusi
         }
 
         // reverse if this slowdown the speed
-        Polyline input_polyline = extrusion.polyline;
+        Polyline3 input_polyline = extrusion.polyline;
         if (!split_from_left)
-            std::reverse(input_polyline.begin(), input_polyline.end());
+            input_polyline.reverse();
 
-        Point  line_start_pt = input_polyline.points.front();
-        Point  line_end_pt   = input_polyline.points[1];
+        Point3  line_start_pt       = input_polyline.points.front();
+        Point3  line_end_pt         = input_polyline.points[1];
         bool   get_next_line = false;
         size_t end_pt_idx    = 1;
 
         // split long extrusion
-        Point last_point = line_start_pt;
+        Point3 last_point = line_start_pt;
         while (split_line_speed < final_v && end_pt_idx < input_polyline.size()) {
             // move to next line
             if (get_next_line) {
                 line_start_pt = input_polyline.points[end_pt_idx - 1];
-                line_end_pt   = input_polyline.points[end_pt_idx];
+                line_end_pt = input_polyline.points[end_pt_idx];
             }
             // This line is cut off as a speed transition area
-            Polyline cuted_polyline;
-            Line     line(line_start_pt, line_end_pt);
+            Polyline3 cuted_polyline;
+            Line3     line(line_start_pt, line_end_pt);
 
             cuted_polyline.append(line_start_pt);
             // split polyline and set speed
@@ -6067,7 +6075,7 @@ void GCode::split_and_mapping_speed(double other_path_v, double final_v, Extrusi
             } else {
                 // path is too long, split it
                 double rate     = min_step_length / line.length();
-                Point  insert_p = line.a + (line.b - line.a) * rate;
+                Point3 insert_p = Point3(line.a + Point3(line.b - line.a) * rate);
 
                 split_line_speed = insert_speed(min_step_length, x_base, smooth_length_count, final_v);
                 line_start_pt    = insert_p;
@@ -6077,7 +6085,7 @@ void GCode::split_and_mapping_speed(double other_path_v, double final_v, Extrusi
             // reverse back
             last_point = cuted_polyline.last_point();
             if (!split_from_left)
-                std::reverse(cuted_polyline.begin(), cuted_polyline.end());
+                cuted_polyline.reverse();
             ExtrusionPath path_step(cuted_polyline, extrusion);
 
             path_step.smooth_speed = split_line_speed;
@@ -6090,7 +6098,7 @@ void GCode::split_and_mapping_speed(double other_path_v, double final_v, Extrusi
             continue;
         }
         // split polyline
-        Polyline p1, p2;
+        Polyline3 p1, p2;
         extrusion.polyline.split_at(last_point, &p1, &p2);
 
         if (split_from_left) {
@@ -6363,12 +6371,22 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     // go to first point of extrusion path
     //BBS: path.first_point is 2D point. But in lazy raise case, lift z is done in travel_to function.
     //Add m_need_change_layer_lift_z when change_layer in case of no lift if m_last_pos is equal to path.first_point() by chance
-    if (!m_last_pos_defined || m_last_pos != path.first_point() || m_need_change_layer_lift_z || (sloped != nullptr && !sloped->is_flat())) {
+    Point3 first_point = path.first_point3();
+    if (!m_last_pos_defined || m_last_pos != first_point || m_need_change_layer_lift_z || (sloped != nullptr && !sloped->is_flat())) {
+        double z = DBL_MAX;
+        if (sloped != nullptr) {
+            z = get_sloped_z(sloped->slope_begin.z_ratio);
+        } else if ((!m_last_pos_defined && first_point.z() != 0) || m_last_pos.z() != first_point.z()) {
+            z = m_nominal_z + unscale_(first_point.z());
+            if (z < 0.1) {
+                throw Slic3r::RuntimeError("GCode: very low z");
+            }
+        }
         gcode += this->travel_to(
             path.first_point(),
             path.role(),
-            "move to first " + description + " point",
-            sloped == nullptr ? DBL_MAX : get_sloped_z(sloped->slope_begin.z_ratio)
+            "move to first " + description + " point; size " + std::to_string(path.polyline.size()),
+            z
         );
         m_need_change_layer_lift_z = false;
     }
@@ -6665,23 +6683,52 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     double path_length = 0.;
     {
         std::string comment = GCodeWriter::full_gcode_comment ? description : "";
+        //BBS: Recompute arc fitting from clean 2D polyline to avoid Polyline3 fitting_result issues
+        std::vector<PathFittingData> fresh_fitting_result;
+        Polyline arc_polyline;
+        if (m_config.enable_arc_fitting && !m_config.spiral_mode && sloped == nullptr && !path.z_contoured) {
+            arc_polyline = path.polyline.to_polyline();
+            arc_polyline.simplify_by_fitting_arc(scaled(m_config.resolution.value));
+            fresh_fitting_result = arc_polyline.fitting_result;
+        }
+
         //BBS: use G1 if not enable arc fitting or has no arc fitting result or in spiral_mode mode
         //Attention: G2 and G3 is not supported in spiral_mode mode
-        if (!m_config.enable_arc_fitting ||
-            path.polyline.fitting_result.empty() ||
+        if (fresh_fitting_result.empty() ||
             m_config.spiral_mode ||
-            sloped != nullptr) {
+            sloped != nullptr ||
+            path.z_contoured) {
             double path_length  = 0.;
             double total_length = sloped == nullptr ? 0. : path.polyline.length() * SCALING_FACTOR;
-            for (const Line &line : path.polyline.lines()) {
+            for (const Line3 &line : path.polyline.lines()) {
                 const double line_length = line.length() * SCALING_FACTOR;
                 // BBS: extursion cmd should E0 on cmd line
                 if (line_length < EPSILON) continue;
                 path_length += line_length;
 
-                if (sloped == nullptr) {
+                if (path.z_contoured) {
+                    Vec2d dest2d = this->point_to_gcode(Point(line.b.x(), line.b.y()));
+                    coordf_t z_diff = unscale_(line.b.z());
+
+                    double extrusion_ratio = 1;
+                    if (path.role() != erIroning) {
+                        extrusion_ratio = (path.height + z_diff) / path.height;
+                    }
+
+                    double e = e_per_mm * line_length * extrusion_ratio;
+
+                    double z = m_nominal_z + z_diff;
+                    if (z < 0.1) {
+                        throw Slic3r::RuntimeError("GCode: very low z");
+                    }
+                    gcode += m_writer.extrude_to_xyz(
+                        Vec3d(dest2d.x(), dest2d.y(), z),
+                        e,
+                        comment + "; z_diff " + std::to_string(z_diff) + " " + ExtrusionEntity::role_to_string(path.role()) + "; eratio " + std::to_string(extrusion_ratio));
+
+                } else if (sloped == nullptr) {
                     gcode += m_writer.extrude_to_xy(
-                        this->point_to_gcode(line.b),
+                        this->point_to_gcode(Point(line.b.x(), line.b.y())),
                         e_per_mm * line_length,
                         comment,path.is_force_no_extrusion());
                 } else {
@@ -6690,7 +6737,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                     auto [z_ratio, e_ratio, slope_speed] = sloped->interpolate(path_length / total_length);
                     //FIX: cooling need to apply correctly
                     //gcode += m_writer.set_speed(slope_speed * 60, "", comment);
-                    Vec2d dest2d = this->point_to_gcode(line.b);
+                    Vec2d dest2d = this->point_to_gcode(Point(line.b.x(), line.b.y()));
                     Vec3d dest3d(dest2d(0), dest2d(1), get_sloped_z(z_ratio));
                     //BBS: todo, should use small e at start to get good seam
                     double slope_e = dE * e_ratio;
@@ -6698,15 +6745,16 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 }
             }
         } else {
-            // BBS: start to generate gcode from arc fitting data which includes line and arc
-            const std::vector<PathFittingData>& fitting_result = path.polyline.fitting_result;
+            // BBS: start to generate gcode from fresh arc fitting data (recomputed in 2D)
+            const std::vector<PathFittingData>& fitting_result = fresh_fitting_result;
+            const Points& arc_points = arc_polyline.points;
             for (size_t fitting_index = 0; fitting_index < fitting_result.size(); fitting_index++) {
                 switch (fitting_result[fitting_index].path_type) {
                 case EMovePathType::Linear_move: {
                     size_t start_index = fitting_result[fitting_index].start_point_index;
                     size_t end_index = fitting_result[fitting_index].end_point_index;
                     for (size_t point_index = start_index + 1; point_index < end_index + 1; point_index++) {
-                        const Line line = Line(path.polyline.points[point_index - 1], path.polyline.points[point_index]);
+                        const Line line = Line(arc_points[point_index - 1], arc_points[point_index]);
                         const double line_length = line.length() * SCALING_FACTOR;
                         // BBS: extursion cmd should E0 on cmd line
                         if (line_length < EPSILON)
@@ -6768,7 +6816,7 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
         gcode += "; Slow Down End\n";
     }
 
-    this->set_last_pos(path.last_point());
+    this->set_last_pos(path.last_point3());
     return gcode;
 }
 
@@ -7689,7 +7737,7 @@ void GCode::ObjectByExtruder::Island::Region::append(const Type type, const Extr
         for (auto* ee : eec->entities)
             perimeters_or_infills->emplace_back(ee);
     } else
-        perimeters_or_infills->emplace_back(const_cast<ExtrusionEntityCollection*>(eec));
+        perimeters_or_infills->push_back(const_cast<ExtrusionEntityCollection*>(eec));
 
     if (copies_extruder != nullptr) {
         // Don't reallocate overrides if not needed.

@@ -1741,12 +1741,12 @@ void make_brim(const Print& print, PrintTryCancel try_cancel, Polygons& islands_
 
     for (auto iter = brimAreaMap.begin(); iter != brimAreaMap.end(); ++iter) {
         if (!iter->second.empty()) {
-            brimMap.insert(std::make_pair(iter->first, makeBrimInfill(iter->second, print, islands_area)));
+            brimMap.emplace(iter->first, makeBrimInfill(iter->second, print, islands_area));
         };
     }
     for (auto iter = supportBrimAreaMap.begin(); iter != supportBrimAreaMap.end(); ++iter) {
         if (!iter->second.empty()) {
-            supportBrimMap.insert(std::make_pair(iter->first, makeBrimInfill(iter->second, print, islands_area)));
+            supportBrimMap.emplace(iter->first, makeBrimInfill(iter->second, print, islands_area));
         };
     }
 
@@ -1930,7 +1930,7 @@ ExtrusionEntityCollection make_brim(const Print &print, PrintTryCancel try_cance
 					auto *loop = new ExtrusionLoop();
                     brim.entities.emplace_back(loop);
 					loop->paths.emplace_back(erBrim, float(flow.mm3_per_mm()), float(flow.width()), float(print.skirt_first_layer_height()));
-		            Points &points = loop->paths.front().polyline.points;
+		            Points3 &points = loop->paths.front().polyline.points;
 		            points.reserve(first_path.size());
 		            for (const ClipperLib_Z::IntPoint &pt : first_path)
 		            	points.emplace_back(coord_t(pt.x()), coord_t(pt.y()));
@@ -1942,7 +1942,7 @@ ExtrusionEntityCollection make_brim(const Print &print, PrintTryCancel try_cance
 			    	for (; i < j; ++ i) {
 			            this_loop_trimmed.entities.emplace_back(new ExtrusionPath(erBrim, float(flow.mm3_per_mm()), float(flow.width()), float(print.skirt_first_layer_height())));
 						const ClipperLib_Z::Path &path = *loops_trimmed_order[i].first;
-			            Points &points = dynamic_cast<ExtrusionPath*>(this_loop_trimmed.entities.back())->polyline.points;
+			            Points3 &points = dynamic_cast<ExtrusionPath*>(this_loop_trimmed.entities.back())->polyline.points;
 			            points.reserve(path.size());
 			            for (const ClipperLib_Z::IntPoint &pt : path)
 			            	points.emplace_back(coord_t(pt.x()), coord_t(pt.y()));

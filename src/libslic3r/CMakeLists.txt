@@ -58,6 +58,7 @@ set(lisbslic3r_sources
     Calib.hpp
     Circle.cpp
     Circle.hpp
+    ContourZ.cpp
     clipper.cpp
     clipper.hpp
     ClipperUtils.cpp
