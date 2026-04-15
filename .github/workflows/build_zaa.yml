@@ -64,17 +64,23 @@ jobs:
       - name: Build BambuStudio + AppImage
         run: ./BuildLinux.sh -isr
 
+      - name: Rename AppImage
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          VERSION="${TAG#zaa-}"
+          mv ./build/BambuStudio_ubu64.AppImage "./build/BambuStudio-ZAA_${VERSION}_Linux.AppImage"
+
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
         with:
           name: BambuStudio-ZAA_Linux_AppImage
-          path: './build/BambuStudio_ubu64.AppImage'
+          path: './build/BambuStudio-ZAA_*_Linux.AppImage'
 
       - name: Upload to Release
         if: inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: ./build/BambuStudio_ubu64.AppImage
+          files: './build/BambuStudio-ZAA_*_Linux.AppImage'
           tag_name: ${{ inputs.release_tag }}
 
   mac-x86:
@@ -116,22 +122,24 @@ jobs:
 
       - name: Pack macOS app
         run: |
+          TAG="${{ inputs.release_tag }}"
+          VERSION="${TAG#zaa-}"
           APP=$(find build -name "BambuStudio.app" -type d | head -1)
           echo "Found app at: $APP"
           cd "$(dirname "$APP")"
-          zip -r "$GITHUB_WORKSPACE/BambuStudio-ZAA_Mac_x86_64.zip" BambuStudio.app
+          zip -r "$GITHUB_WORKSPACE/BambuStudio-ZAA_${VERSION}_Mac_x86_64.zip" BambuStudio.app
 
       - name: Upload macOS ZIP
         uses: actions/upload-artifact@v4
         with:
           name: BambuStudio-ZAA_Mac_x86_64
-          path: BambuStudio-ZAA_Mac_x86_64.zip
+          path: BambuStudio-ZAA_*_Mac_x86_64.zip
 
       - name: Upload to Release
         if: inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: BambuStudio-ZAA_Mac_x86_64.zip
+          files: BambuStudio-ZAA_*_Mac_x86_64.zip
           tag_name: ${{ inputs.release_tag }}
 
   mac-arm:
@@ -172,22 +180,24 @@ jobs:
 
       - name: Pack macOS app
         run: |
+          TAG="${{ inputs.release_tag }}"
+          VERSION="${TAG#zaa-}"
           APP=$(find build -name "BambuStudio.app" -type d | head -1)
           echo "Found app at: $APP"
           cd "$(dirname "$APP")"
-          zip -r "$GITHUB_WORKSPACE/BambuStudio-ZAA_Mac_universal.zip" BambuStudio.app
+          zip -r "$GITHUB_WORKSPACE/BambuStudio-ZAA_${VERSION}_Mac_universal.zip" BambuStudio.app
 
       - name: Upload macOS ZIP
         uses: actions/upload-artifact@v4
         with:
           name: BambuStudio-ZAA_Mac_universal
-          path: BambuStudio-ZAA_Mac_universal.zip
+          path: BambuStudio-ZAA_*_Mac_universal.zip
 
       - name: Upload to Release
         if: inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: BambuStudio-ZAA_Mac_universal.zip
+          files: BambuStudio-ZAA_*_Mac_universal.zip
           tag_name: ${{ inputs.release_tag }}
 
   windows-portable:
@@ -238,17 +248,21 @@ jobs:
           cmake --build . --target install --config Release -- /m
 
       - name: Create Portable ZIP
-        run: 7z a -tzip BambuStudio-ZAA_Windows_portable.zip ./install_dir/*
+        shell: bash
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          VERSION="${TAG#zaa-}"
+          7z a -tzip "BambuStudio-ZAA_${VERSION}_Windows_portable.zip" ./install_dir/*
 
       - name: Upload Portable ZIP
         uses: actions/upload-artifact@v4
         with:
           name: BambuStudio-ZAA_Windows_Portable
-          path: BambuStudio-ZAA_Windows_portable.zip
+          path: BambuStudio-ZAA_*_Windows_portable.zip
 
       - name: Upload to Release
         if: inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: BambuStudio-ZAA_Windows_portable.zip
+          files: BambuStudio-ZAA_*_Windows_portable.zip
           tag_name: ${{ inputs.release_tag }}
