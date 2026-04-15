@@ -35,3 +35,4 @@ dep_win_new
 compile_commands.json
 .jira/
 .claude/settings.local.json
+deps/build2/
